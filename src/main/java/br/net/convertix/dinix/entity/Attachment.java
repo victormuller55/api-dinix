@@ -1,0 +1,36 @@
+package br.net.convertix.dinix.entity;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@Entity
+@Table(name = "attachments")
+public class Attachment extends BaseEntity {
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "transaction_id", nullable = false)
+    private FinancialTransaction transaction;
+
+    @Column(nullable = false, length = 255)
+    private String fileName;
+
+    @Column(nullable = false, length = 1000)
+    private String fileUrl;
+
+    @Column(length = 120)
+    private String contentType;
+}

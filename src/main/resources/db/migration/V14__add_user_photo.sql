@@ -1,0 +1,2 @@
+ALTER TABLE users
+    ADD COLUMN photo_url VARCHAR(500) NULL AFTER email;

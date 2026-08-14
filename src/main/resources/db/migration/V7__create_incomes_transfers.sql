@@ -1,0 +1,43 @@
+CREATE TABLE incomes (
+    id CHAR(36) NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    description VARCHAR(255) NOT NULL,
+    amount DECIMAL(19, 2) NOT NULL,
+    category_id CHAR(36),
+    account_id CHAR(36) NOT NULL,
+    received_date DATE NOT NULL,
+    recurring TINYINT(1) NOT NULL DEFAULT 0,
+    notes VARCHAR(1000),
+    active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_incomes_user_id (user_id),
+    KEY idx_incomes_received_date (received_date),
+    KEY idx_incomes_account_id (account_id),
+    KEY idx_incomes_category_id (category_id),
+    CONSTRAINT fk_incomes_user FOREIGN KEY (user_id) REFERENCES users (id),
+    CONSTRAINT fk_incomes_category FOREIGN KEY (category_id) REFERENCES categories (id),
+    CONSTRAINT fk_incomes_account FOREIGN KEY (account_id) REFERENCES financial_accounts (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE transfers (
+    id CHAR(36) NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    source_account_id CHAR(36) NOT NULL,
+    destination_account_id CHAR(36) NOT NULL,
+    amount DECIMAL(19, 2) NOT NULL,
+    transfer_date DATE NOT NULL,
+    description VARCHAR(255),
+    active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_transfers_user_id (user_id),
+    KEY idx_transfers_date (transfer_date),
+    KEY idx_transfers_source (source_account_id),
+    KEY idx_transfers_destination (destination_account_id),
+    CONSTRAINT fk_transfers_user FOREIGN KEY (user_id) REFERENCES users (id),
+    CONSTRAINT fk_transfers_source FOREIGN KEY (source_account_id) REFERENCES financial_accounts (id),
+    CONSTRAINT fk_transfers_destination FOREIGN KEY (destination_account_id) REFERENCES financial_accounts (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -1,0 +1,20 @@
+CREATE TABLE credit_cards (
+    id CHAR(36) NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    account_id CHAR(36),
+    name VARCHAR(120) NOT NULL,
+    bank VARCHAR(120),
+    credit_limit DECIMAL(19, 2) NOT NULL,
+    closing_day INT NOT NULL,
+    due_day INT NOT NULL,
+    active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_credit_cards_user_id (user_id),
+    KEY idx_credit_cards_account_id (account_id),
+    CONSTRAINT chk_credit_cards_closing_day CHECK (closing_day BETWEEN 1 AND 31),
+    CONSTRAINT chk_credit_cards_due_day CHECK (due_day BETWEEN 1 AND 31),
+    CONSTRAINT fk_credit_cards_user FOREIGN KEY (user_id) REFERENCES users (id),
+    CONSTRAINT fk_credit_cards_account FOREIGN KEY (account_id) REFERENCES financial_accounts (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

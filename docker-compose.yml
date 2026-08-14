@@ -1,0 +1,41 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: dinix-mysql
+    environment:
+      MYSQL_DATABASE: db_dinix
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3306:3306"
+    volumes:
+      - dinix_mysqldata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build: .
+    container_name: dinix-api
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "7001:7001"
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_PORT: 7001
+      DB_URL: jdbc:mysql://mysql:3306/db_dinix?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=America/Sao_Paulo
+      DB_USERNAME: root
+      DB_PASSWORD: root
+      JWT_SECRET: change-me-to-a-256-bit-secret-key-for-hs256!!
+      APP_UPLOAD_DIR: /app/uploads
+      APP_TIMEZONE: America/Sao_Paulo
+    volumes:
+      - dinix_uploads:/app/uploads
+
+volumes:
+  dinix_mysqldata:
+  dinix_uploads:

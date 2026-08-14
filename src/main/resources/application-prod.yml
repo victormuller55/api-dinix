@@ -1,0 +1,35 @@
+server:
+  address: ${SERVER_ADDRESS:0.0.0.0}
+  port: ${SERVER_PORT:7001}
+  forward-headers-strategy: framework
+
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:mysql://${DB_HOST:mysql-db}:${DB_PORT:3306}/${DB_NAME:db_dinix}?allowPublicKeyRetrieval=true&useSSL=false&characterEncoding=UTF-8&serverTimezone=${APP_TIMEZONE:America/Sao_Paulo}}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    show-sql: false
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:none}
+    properties:
+      hibernate:
+        type:
+          preferred_uuid_jdbc_type: CHAR
+        format_sql: false
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+app:
+  storage:
+    path: ${APP_UPLOAD_DIR:${APP_STORAGE_PATH:/app/uploads}}
+
+logging:
+  level:
+    br.net.convertix.dinix: INFO
+    org.hibernate.SQL: WARN
