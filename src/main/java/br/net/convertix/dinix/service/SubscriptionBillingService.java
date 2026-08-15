@@ -1,23 +1,18 @@
 package br.net.convertix.dinix.service;
 
+import br.net.convertix.dinix.entity.Purchase;
 import br.net.convertix.dinix.entity.Subscription;
 import br.net.convertix.dinix.enums.RecurrenceType;
 import br.net.convertix.dinix.repository.SubscriptionRepository;
 import br.net.convertix.dinix.util.MoneyUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.YearMonth;
-import java.util.List;
 
 @Service
 public class SubscriptionBillingService {
-
-    private static final Logger log = LoggerFactory.getLogger(SubscriptionBillingService.class);
 
     private final SubscriptionRepository repository;
     private final PurchaseService purchaseService;
@@ -30,21 +25,25 @@ public class SubscriptionBillingService {
     }
 
     @Transactional
-    public void chargeToday(Subscription subscription) {
+    public Purchase chargeToday(Subscription subscription) {
         LocalDate today = LocalDate.now();
-        purchaseService.chargeSubscription(subscription, today);
-        subscription.setNextBillingDate(computeNextBillingDate(subscription, today));
-        repository.save(subscription);
+        YearMonth month = YearMonth.from(today);
+        Purchase purchase = purchaseService.chargeSubscription(subscription, today);
+        markPaid(subscription, month, today);
+        return purchase;
     }
 
     @Transactional
-    public void chargeIfDue(Subscription subscription, LocalDate referenceDate) {
-        LocalDate next = subscription.getNextBillingDate();
-        if (next == null || next.isAfter(referenceDate)) {
-            return;
-        }
-        purchaseService.chargeSubscription(subscription, next);
-        subscription.setNextBillingDate(computeNextBillingDate(subscription, next));
+    public Purchase chargeForMonth(Subscription subscription, LocalDate chargeDate, YearMonth paidMonth) {
+        Purchase purchase = purchaseService.chargeSubscription(subscription, chargeDate);
+        markPaid(subscription, paidMonth, chargeDate);
+        return purchase;
+    }
+
+    private void markPaid(Subscription subscription, YearMonth paidMonth, LocalDate lastBillingDate) {
+        subscription.setLastPaidYear(paidMonth.getYear());
+        subscription.setLastPaidMonth(paidMonth.getMonthValue());
+        subscription.setNextBillingDate(computeNextBillingDate(subscription, lastBillingDate));
         repository.save(subscription);
     }
 
@@ -64,19 +63,5 @@ public class SubscriptionBillingService {
             next = MoneyUtils.atDayOfMonth(YearMonth.from(startDate).plusMonths(1), billingDay);
         }
         return next;
-    }
-
-    @Scheduled(cron = "0 0 6 * * *")
-    @Transactional
-    public void processDueSubscriptions() {
-        LocalDate today = LocalDate.now();
-        List<Subscription> due = repository.findByActiveTrueAndNextBillingDateLessThanEqual(today);
-        for (Subscription subscription : due) {
-            try {
-                chargeIfDue(subscription, today);
-            } catch (Exception ex) {
-                log.warn("Falha ao cobrar assinatura {}: {}", subscription.getId(), ex.getMessage());
-            }
-        }
     }
 }

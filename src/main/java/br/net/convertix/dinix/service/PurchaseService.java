@@ -14,6 +14,7 @@ import br.net.convertix.dinix.entity.Product;
 import br.net.convertix.dinix.entity.Purchase;
 import br.net.convertix.dinix.entity.PurchaseItem;
 import br.net.convertix.dinix.entity.PurchaseLocation;
+import br.net.convertix.dinix.entity.RecurringExpense;
 import br.net.convertix.dinix.entity.Subscription;
 import br.net.convertix.dinix.entity.Tag;
 import br.net.convertix.dinix.entity.User;
@@ -57,6 +58,7 @@ public class PurchaseService {
     private final AccountService accountService;
     private final CategoryService categoryService;
     private final CreditCardService creditCardService;
+    private final CreditCardInvoiceService creditCardInvoiceService;
     private final LocationService locationService;
     private final LedgerService ledgerService;
     private final PurchaseMapper purchaseMapper;
@@ -71,6 +73,7 @@ public class PurchaseService {
             AccountService accountService,
             CategoryService categoryService,
             CreditCardService creditCardService,
+            CreditCardInvoiceService creditCardInvoiceService,
             LocationService locationService,
             LedgerService ledgerService,
             PurchaseMapper purchaseMapper) {
@@ -83,6 +86,7 @@ public class PurchaseService {
         this.accountService = accountService;
         this.categoryService = categoryService;
         this.creditCardService = creditCardService;
+        this.creditCardInvoiceService = creditCardInvoiceService;
         this.locationService = locationService;
         this.ledgerService = ledgerService;
         this.purchaseMapper = purchaseMapper;
@@ -126,6 +130,7 @@ public class PurchaseService {
         generateInstallments(purchase, parts);
         Purchase saved = purchaseRepository.save(purchase);
         postLedger(saved);
+        applyCreditInvoices(saved, BigDecimal.ONE);
         return purchaseMapper.toResponse(saved);
     }
 
@@ -194,6 +199,7 @@ public class PurchaseService {
     @Transactional
     public void delete(UUID userId, UUID id) {
         Purchase purchase = getOwned(userId, id);
+        applyCreditInvoices(purchase, BigDecimal.ONE.negate());
         purchase.setActive(false);
         for (Installment installment : purchase.getInstallments()) {
             if (installment.getStatus() != InstallmentStatus.CANCELLED) {
@@ -215,6 +221,12 @@ public class PurchaseService {
         installment.setStatus(InstallmentStatus.PAID);
         installment.setPaidAt(LocalDateTime.now());
         Purchase purchase = installment.getPurchase();
+        if (purchase.getPaymentMethod() == PaymentMethod.CREDIT_CARD && purchase.getCreditCard() != null) {
+            creditCardInvoiceService.addAmount(
+                    purchase.getCreditCard(),
+                    YearMonth.from(installment.getDueDate()),
+                    MoneyUtils.of(installment.getAmount()).negate());
+        }
         if (purchase.getPaymentMethod() == PaymentMethod.CREDIT_CARD && purchase.getFinancialAccount() != null) {
             ledgerService.postCardPayment(
                     purchase.getUser(),
@@ -235,11 +247,54 @@ public class PurchaseService {
     @Transactional
     public Purchase chargeSubscription(Subscription subscription, LocalDate chargeDate) {
         validateSubscriptionPayment(subscription);
-        User user = subscription.getUser();
-        PaymentMethod method = subscription.getPaymentMethod();
-        FinancialAccount account = subscription.getAccount();
-        CreditCard card = subscription.getCreditCard();
-        BigDecimal total = MoneyUtils.of(subscription.getAmount());
+        return chargeRecurring(
+                subscription.getUser(),
+                subscription.getName(),
+                subscription.getAmount(),
+                subscription.getCategory(),
+                subscription.getPaymentMethod(),
+                subscription.getAccount(),
+                subscription.getCreditCard(),
+                chargeDate,
+                "Assinatura");
+    }
+
+    @Transactional
+    public Purchase chargeRecurringExpense(
+            RecurringExpense expense,
+            LocalDate chargeDate,
+            PaymentMethod method,
+            FinancialAccount account,
+            CreditCard card) {
+        if (method == PaymentMethod.CREDIT_CARD && card == null) {
+            throw new BusinessException("Cartão de crédito é obrigatório para essa forma de pagamento");
+        }
+        if (method != PaymentMethod.CREDIT_CARD && account == null) {
+            throw new BusinessException("Conta financeira é obrigatória para essa forma de pagamento");
+        }
+        return chargeRecurring(
+                expense.getUser(),
+                expense.getName(),
+                expense.getAmount(),
+                expense.getCategory(),
+                method,
+                account,
+                card,
+                chargeDate,
+                "Gasto mensal");
+    }
+
+    private Purchase chargeRecurring(
+            User user,
+            String description,
+            BigDecimal amount,
+            Category category,
+            PaymentMethod method,
+            FinancialAccount account,
+            CreditCard card,
+            LocalDate chargeDate,
+            String notes) {
+        BigDecimal total = MoneyUtils.of(amount);
         BigDecimal[] parts = MoneyUtils.splitInstallments(total, 1);
         LocalDate firstDue = method == PaymentMethod.CREDIT_CARD && card != null
                 ? creditInvoiceDueDate(chargeDate, card)
@@ -247,15 +302,15 @@ public class PurchaseService {
 
         Purchase purchase = Purchase.builder()
                 .user(user)
-                .description(subscription.getName())
+                .description(description)
                 .purchaseDate(chargeDate)
                 .purchaseTime(LocalTime.now())
                 .totalAmount(total)
-                .category(subscription.getCategory())
+                .category(category)
                 .paymentMethod(method)
                 .financialAccount(method == PaymentMethod.CREDIT_CARD ? null : account)
                 .creditCard(card)
-                .notes("Assinatura")
+                .notes(notes)
                 .numberOfInstallments(1)
                 .installmentAmount(parts[0])
                 .firstInstallmentDate(firstDue)
@@ -265,6 +320,7 @@ public class PurchaseService {
         generateInstallments(purchase, parts);
         Purchase saved = purchaseRepository.save(purchase);
         postLedger(saved);
+        applyCreditInvoices(saved, BigDecimal.ONE);
         return saved;
     }
 
@@ -364,6 +420,21 @@ public class PurchaseService {
                 ? YearMonth.from(purchaseDate)
                 : YearMonth.from(purchaseDate).plusMonths(1);
         return MoneyUtils.atDayOfMonth(invoiceMonth, card.getDueDay());
+    }
+
+    private void applyCreditInvoices(Purchase purchase, BigDecimal signal) {
+        if (purchase.getPaymentMethod() != PaymentMethod.CREDIT_CARD || purchase.getCreditCard() == null) {
+            return;
+        }
+        CreditCard card = purchase.getCreditCard();
+        for (Installment installment : purchase.getInstallments()) {
+            if (installment.getStatus() == InstallmentStatus.CANCELLED) {
+                continue;
+            }
+            YearMonth period = YearMonth.from(installment.getDueDate());
+            BigDecimal delta = MoneyUtils.of(installment.getAmount().multiply(signal));
+            creditCardInvoiceService.addAmount(card, period, delta);
+        }
     }
 
     private void postLedger(Purchase purchase) {

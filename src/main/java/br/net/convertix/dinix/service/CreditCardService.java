@@ -5,36 +5,46 @@ import br.net.convertix.dinix.dto.request.UpdateCreditCardRequest;
 import br.net.convertix.dinix.dto.response.CreditCardResponse;
 import br.net.convertix.dinix.dto.response.PageResponse;
 import br.net.convertix.dinix.entity.CreditCard;
+import br.net.convertix.dinix.entity.CreditCardInvoice;
 import br.net.convertix.dinix.entity.FinancialAccount;
 import br.net.convertix.dinix.entity.User;
-import br.net.convertix.dinix.enums.InstallmentStatus;
+import br.net.convertix.dinix.enums.CreditCardInvoiceStatus;
 import br.net.convertix.dinix.exception.ResourceNotFoundException;
+import br.net.convertix.dinix.repository.CreditCardInvoiceRepository;
 import br.net.convertix.dinix.repository.CreditCardRepository;
-import br.net.convertix.dinix.repository.InstallmentRepository;
 import br.net.convertix.dinix.util.MoneyUtils;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.YearMonth;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
 
 @Service
 public class CreditCardService {
 
+    private static final EnumSet<CreditCardInvoiceStatus> USED_LIMIT_STATUSES = EnumSet.of(
+            CreditCardInvoiceStatus.CURRENT,
+            CreditCardInvoiceStatus.UPCOMING,
+            CreditCardInvoiceStatus.CLOSED
+    );
+
     private final CreditCardRepository creditCardRepository;
-    private final InstallmentRepository installmentRepository;
+    private final CreditCardInvoiceRepository invoiceRepository;
     private final AuthService authService;
     private final AccountService accountService;
 
     public CreditCardService(
             CreditCardRepository creditCardRepository,
-            InstallmentRepository installmentRepository,
+            CreditCardInvoiceRepository invoiceRepository,
             AuthService authService,
             AccountService accountService) {
         this.creditCardRepository = creditCardRepository;
-        this.installmentRepository = installmentRepository;
+        this.invoiceRepository = invoiceRepository;
         this.authService = authService;
         this.accountService = accountService;
     }
@@ -53,22 +63,32 @@ public class CreditCardService {
                 .dueDay(request.dueDay())
                 .active(true)
                 .build();
-        return toResponse(creditCardRepository.save(card));
+        CreditCard saved = creditCardRepository.save(card);
+        ensureCurrentInvoice(saved);
+        return toResponse(saved);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public PageResponse<CreditCardResponse> list(UUID userId, Pageable pageable) {
-        return PageResponse.from(creditCardRepository.findByUserIdAndActiveTrue(userId, pageable).map(this::toResponse));
+        return PageResponse.from(creditCardRepository.findByUserIdAndActiveTrue(userId, pageable).map(card -> {
+            ensureCurrentInvoice(card);
+            return toResponse(card);
+        }));
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public List<CreditCardResponse> listAll(UUID userId) {
-        return creditCardRepository.findByUserIdAndActiveTrue(userId).stream().map(this::toResponse).toList();
+        return creditCardRepository.findByUserIdAndActiveTrue(userId).stream().map(card -> {
+            ensureCurrentInvoice(card);
+            return toResponse(card);
+        }).toList();
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public CreditCardResponse get(UUID userId, UUID id) {
-        return toResponse(getOwned(userId, id));
+        CreditCard card = getOwned(userId, id);
+        ensureCurrentInvoice(card);
+        return toResponse(card);
     }
 
     @Transactional
@@ -80,6 +100,7 @@ public class CreditCardService {
         card.setCreditLimit(MoneyUtils.of(request.creditLimit()));
         card.setClosingDay(request.closingDay());
         card.setDueDay(request.dueDay());
+        ensureCurrentInvoice(card);
         return toResponse(creditCardRepository.save(card));
     }
 
@@ -103,8 +124,8 @@ public class CreditCardService {
     }
 
     public CreditCardResponse toResponse(CreditCard card) {
-        BigDecimal used = MoneyUtils.of(installmentRepository.sumUsedLimit(
-                card.getId(), List.of(InstallmentStatus.PENDING, InstallmentStatus.OVERDUE)));
+        BigDecimal used = MoneyUtils.of(
+                invoiceRepository.sumAmountByCardAndStatuses(card.getId(), USED_LIMIT_STATUSES));
         BigDecimal available = card.getCreditLimit().subtract(used);
         return new CreditCardResponse(
                 card.getId(),
@@ -120,5 +141,28 @@ public class CreditCardService {
                 card.getCreatedAt(),
                 card.getUpdatedAt()
         );
+    }
+
+    private void ensureCurrentInvoice(CreditCard card) {
+        if (invoiceRepository.findByCreditCardIdAndStatus(card.getId(), CreditCardInvoiceStatus.CURRENT).isPresent()) {
+            return;
+        }
+        YearMonth period = CreditCardInvoiceService.currentInvoiceMonth(card, LocalDate.now());
+        CreditCardInvoice existing = invoiceRepository
+                .findByCreditCardIdAndReferenceYearAndReferenceMonth(
+                        card.getId(), period.getYear(), period.getMonthValue())
+                .orElse(null);
+        if (existing != null) {
+            existing.setStatus(CreditCardInvoiceStatus.CURRENT);
+            invoiceRepository.save(existing);
+            return;
+        }
+        invoiceRepository.save(CreditCardInvoice.builder()
+                .creditCard(card)
+                .referenceYear(period.getYear())
+                .referenceMonth(period.getMonthValue())
+                .amount(MoneyUtils.zero())
+                .status(CreditCardInvoiceStatus.CURRENT)
+                .build());
     }
 }

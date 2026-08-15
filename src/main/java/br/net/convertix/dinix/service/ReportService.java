@@ -7,11 +7,12 @@ import br.net.convertix.dinix.dto.response.ReportResponse;
 import br.net.convertix.dinix.entity.FinancialAccount;
 import br.net.convertix.dinix.entity.Investment;
 import br.net.convertix.dinix.entity.NetWorthSnapshot;
-import br.net.convertix.dinix.enums.InstallmentStatus;
+import br.net.convertix.dinix.enums.AccountType;
+import br.net.convertix.dinix.enums.CreditCardInvoiceStatus;
 import br.net.convertix.dinix.enums.TransactionType;
+import br.net.convertix.dinix.repository.CreditCardInvoiceRepository;
 import br.net.convertix.dinix.repository.CreditCardRepository;
 import br.net.convertix.dinix.repository.FinancialAccountRepository;
-import br.net.convertix.dinix.repository.InstallmentRepository;
 import br.net.convertix.dinix.repository.InvestmentRepository;
 import br.net.convertix.dinix.repository.NetWorthSnapshotRepository;
 import br.net.convertix.dinix.util.DateUtils;
@@ -32,7 +33,7 @@ public class ReportService {
     private final FinancialAccountRepository accountRepository;
     private final InvestmentRepository investmentRepository;
     private final CreditCardRepository creditCardRepository;
-    private final InstallmentRepository installmentRepository;
+    private final CreditCardInvoiceRepository invoiceRepository;
     private final NetWorthSnapshotRepository snapshotRepository;
     private final br.net.convertix.dinix.repository.FinancialTransactionRepository transactionRepository;
     private final AuthService authService;
@@ -42,7 +43,7 @@ public class ReportService {
             FinancialAccountRepository accountRepository,
             InvestmentRepository investmentRepository,
             CreditCardRepository creditCardRepository,
-            InstallmentRepository installmentRepository,
+            CreditCardInvoiceRepository invoiceRepository,
             NetWorthSnapshotRepository snapshotRepository,
             br.net.convertix.dinix.repository.FinancialTransactionRepository transactionRepository,
             AuthService authService) {
@@ -50,7 +51,7 @@ public class ReportService {
         this.accountRepository = accountRepository;
         this.investmentRepository = investmentRepository;
         this.creditCardRepository = creditCardRepository;
-        this.installmentRepository = installmentRepository;
+        this.invoiceRepository = invoiceRepository;
         this.snapshotRepository = snapshotRepository;
         this.transactionRepository = transactionRepository;
         this.authService = authService;
@@ -133,15 +134,26 @@ public class ReportService {
     }
 
     private NetWorthResponse calculate(UUID userId) {
-        BigDecimal accounts = accountRepository.findByUserIdAndActiveTrue(userId).stream()
+        List<FinancialAccount> financialAccounts = accountRepository.findByUserIdAndActiveTrue(userId);
+        BigDecimal accounts = financialAccounts.stream()
+                .filter(a -> a.getAccountType() != AccountType.INVESTMENT)
                 .map(FinancialAccount::getCurrentBalance)
                 .reduce(MoneyUtils.zero(), BigDecimal::add);
-        BigDecimal investments = investmentRepository.findByUserIdAndActiveTrue(userId).stream()
+        BigDecimal accountInvestments = financialAccounts.stream()
+                .filter(a -> a.getAccountType() == AccountType.INVESTMENT)
+                .map(FinancialAccount::getCurrentBalance)
+                .reduce(MoneyUtils.zero(), BigDecimal::add);
+        BigDecimal portfolioInvestments = investmentRepository.findByUserIdAndActiveTrue(userId).stream()
                 .map(Investment::getCurrentValue)
                 .reduce(MoneyUtils.zero(), BigDecimal::add);
+        BigDecimal investments = accountInvestments.add(portfolioInvestments);
         BigDecimal debts = creditCardRepository.findByUserIdAndActiveTrue(userId).stream()
-                .map(card -> MoneyUtils.of(installmentRepository.sumUsedLimit(
-                        card.getId(), List.of(InstallmentStatus.PENDING, InstallmentStatus.OVERDUE))))
+                .map(card -> MoneyUtils.of(invoiceRepository.sumAmountByCardAndStatuses(
+                        card.getId(),
+                        List.of(
+                                CreditCardInvoiceStatus.CURRENT,
+                                CreditCardInvoiceStatus.UPCOMING,
+                                CreditCardInvoiceStatus.CLOSED))))
                 .reduce(MoneyUtils.zero(), BigDecimal::add);
         return new NetWorthResponse(accounts, investments, debts, accounts.add(investments).subtract(debts));
     }

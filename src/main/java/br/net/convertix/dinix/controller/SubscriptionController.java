@@ -1,14 +1,17 @@
 package br.net.convertix.dinix.controller;
 
 import br.net.convertix.dinix.dto.request.CreateSubscriptionRequest;
+import br.net.convertix.dinix.dto.request.PaySubscriptionRequest;
 import br.net.convertix.dinix.dto.response.PageResponse;
+import br.net.convertix.dinix.dto.response.PurchaseResponse;
 import br.net.convertix.dinix.dto.response.SubscriptionResponse;
 import br.net.convertix.dinix.dto.response.SubscriptionSummaryResponse;
 import br.net.convertix.dinix.security.SecurityUtils;
 import br.net.convertix.dinix.service.SubscriptionService;
+import br.net.convertix.dinix.web.Paginacao;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import br.net.convertix.dinix.web.Paginacao;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,9 +20,12 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -43,6 +49,12 @@ public class SubscriptionController {
         return subscriptionService.summary(SecurityUtils.currentUserId());
     }
 
+    @GetMapping("/pendentes")
+    public List<SubscriptionResponse> pending(
+            @RequestParam("data") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data) {
+        return subscriptionService.pendingOn(SecurityUtils.currentUserId(), data);
+    }
+
     @GetMapping("/{id}")
     public SubscriptionResponse get(@PathVariable UUID id) {
         return subscriptionService.get(SecurityUtils.currentUserId(), id);
@@ -54,8 +66,22 @@ public class SubscriptionController {
         return subscriptionService.create(SecurityUtils.currentUserId(), request);
     }
 
+    @PostMapping("/{id}/pagar")
+    public PurchaseResponse pay(
+            @PathVariable UUID id,
+            @Valid @RequestBody PaySubscriptionRequest request,
+            @RequestParam(value = "data", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data) {
+        return subscriptionService.pay(
+                SecurityUtils.currentUserId(),
+                id,
+                request,
+                data != null ? data : LocalDate.now());
+    }
+
     @PutMapping("/{id}")
-    public SubscriptionResponse update(@PathVariable UUID id, @Valid @RequestBody CreateSubscriptionRequest request) {
+    public SubscriptionResponse update(
+            @PathVariable UUID id, @Valid @RequestBody CreateSubscriptionRequest request) {
         return subscriptionService.update(SecurityUtils.currentUserId(), id, request);
     }
 

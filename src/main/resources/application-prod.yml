@@ -5,7 +5,7 @@ server:
 
 spring:
   datasource:
-    url: ${DB_URL:jdbc:mysql://${DB_HOST:mysql-db}:${DB_PORT:3306}/${DB_NAME:db_dinix}?allowPublicKeyRetrieval=true&useSSL=false&characterEncoding=UTF-8&serverTimezone=${APP_TIMEZONE:America/Sao_Paulo}}
+    url: ${DB_URL:jdbc:mysql://${DB_HOST:mysql-db}:${DB_PORT:3306}/${DB_NAME:db_dinix}?createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useSSL=false&characterEncoding=UTF-8&serverTimezone=${APP_TIMEZONE:America/Sao_Paulo}}
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver

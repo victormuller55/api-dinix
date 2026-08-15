@@ -19,4 +19,6 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, UUID
     List<Subscription> findByActiveTrueAndNextBillingDateLessThanEqual(LocalDate date);
 
     Optional<Subscription> findByIdAndUserId(UUID id, UUID userId);
+
+    Optional<Subscription> findByIdAndUserIdAndActiveTrue(UUID id, UUID userId);
 }

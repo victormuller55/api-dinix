@@ -1,14 +1,22 @@
 package br.net.convertix.dinix.service;
 
 import br.net.convertix.dinix.dto.request.CreateSubscriptionRequest;
+import br.net.convertix.dinix.dto.request.PaySubscriptionRequest;
 import br.net.convertix.dinix.dto.response.NextPaymentItemResponse;
 import br.net.convertix.dinix.dto.response.PageResponse;
+import br.net.convertix.dinix.dto.response.PurchaseResponse;
 import br.net.convertix.dinix.dto.response.SubscriptionResponse;
 import br.net.convertix.dinix.dto.response.SubscriptionSummaryResponse;
+import br.net.convertix.dinix.entity.CreditCard;
+import br.net.convertix.dinix.entity.FinancialAccount;
+import br.net.convertix.dinix.entity.Purchase;
 import br.net.convertix.dinix.entity.Subscription;
 import br.net.convertix.dinix.entity.User;
+import br.net.convertix.dinix.enums.PaymentMethod;
 import br.net.convertix.dinix.enums.RecurrenceType;
+import br.net.convertix.dinix.exception.BusinessException;
 import br.net.convertix.dinix.exception.ResourceNotFoundException;
+import br.net.convertix.dinix.mapper.PurchaseMapper;
 import br.net.convertix.dinix.repository.SubscriptionRepository;
 import br.net.convertix.dinix.util.MoneyUtils;
 import org.springframework.data.domain.Pageable;
@@ -31,8 +39,8 @@ public class SubscriptionService {
     private final AccountService accountService;
     private final CategoryService categoryService;
     private final CreditCardService creditCardService;
-
     private final SubscriptionBillingService subscriptionBillingService;
+    private final PurchaseMapper purchaseMapper;
 
     public SubscriptionService(
             SubscriptionRepository repository,
@@ -40,17 +48,20 @@ public class SubscriptionService {
             AccountService accountService,
             CategoryService categoryService,
             CreditCardService creditCardService,
-            SubscriptionBillingService subscriptionBillingService) {
+            SubscriptionBillingService subscriptionBillingService,
+            PurchaseMapper purchaseMapper) {
         this.repository = repository;
         this.authService = authService;
         this.accountService = accountService;
         this.categoryService = categoryService;
         this.creditCardService = creditCardService;
         this.subscriptionBillingService = subscriptionBillingService;
+        this.purchaseMapper = purchaseMapper;
     }
 
     @Transactional
     public SubscriptionResponse create(UUID userId, CreateSubscriptionRequest request) {
+        validatePayment(request.paymentMethod(), request.accountId(), request.creditCardId());
         User user = authService.getActive(userId);
         RecurrenceType recurrence = request.recurrence() != null ? request.recurrence() : RecurrenceType.MONTHLY;
         LocalDate next = subscriptionBillingService.resolveInitialNextBillingDate(
@@ -92,9 +103,21 @@ public class SubscriptionService {
         return toResponse(getOwned(userId, id));
     }
 
+    @Transactional(readOnly = true)
+    public List<SubscriptionResponse> pendingOn(UUID userId, LocalDate date) {
+        return activeOf(userId).stream()
+                .filter(subscription -> isPendingOn(subscription, date))
+                .map(this::toResponse)
+                .toList();
+    }
+
     @Transactional
     public SubscriptionResponse update(UUID userId, UUID id, CreateSubscriptionRequest request) {
+        validatePayment(request.paymentMethod(), request.accountId(), request.creditCardId());
         Subscription subscription = getOwned(userId, id);
+        if (!subscription.isActive()) {
+            throw new BusinessException("Assinatura cancelada não pode ser editada");
+        }
         subscription.setName(request.name());
         subscription.setDescription(request.description());
         subscription.setAmount(MoneyUtils.of(request.amount()));
@@ -116,6 +139,34 @@ public class SubscriptionService {
         repository.save(subscription);
     }
 
+    @Transactional
+    public PurchaseResponse pay(
+            UUID userId, UUID id, PaySubscriptionRequest request, LocalDate referenceDate) {
+        Subscription subscription = getOwnedActive(userId, id);
+        YearMonth month = YearMonth.from(referenceDate);
+        if (!occursIn(subscription, month)) {
+            throw new BusinessException("Esta assinatura não está ativa para o mês selecionado");
+        }
+        if (isPaidFor(subscription, month)) {
+            throw new BusinessException("Esta assinatura já foi paga neste mês");
+        }
+        LocalDate dueDate = MoneyUtils.atDayOfMonth(month, subscription.getBillingDay());
+        if (!referenceDate.equals(dueDate)) {
+            throw new BusinessException("Esta assinatura não está pendente na data selecionada");
+        }
+        validatePayment(request.paymentMethod(), request.financialAccountId(), request.creditCardId());
+        FinancialAccount account = request.financialAccountId() != null
+                ? accountService.getOwned(userId, request.financialAccountId())
+                : null;
+        CreditCard card = creditCardService.getOwnedOrNull(userId, request.creditCardId());
+        subscription.setPaymentMethod(request.paymentMethod());
+        subscription.setAccount(request.paymentMethod() == PaymentMethod.CREDIT_CARD ? null : account);
+        subscription.setCreditCard(request.paymentMethod() == PaymentMethod.CREDIT_CARD ? card : null);
+        LocalDate chargeDate = LocalDate.now().isBefore(dueDate) ? dueDate : LocalDate.now();
+        Purchase purchase = subscriptionBillingService.chargeForMonth(subscription, chargeDate, month);
+        return purchaseMapper.toResponse(purchase);
+    }
+
     @Transactional(readOnly = true)
     public SubscriptionSummaryResponse summary(UUID userId) {
         List<Subscription> active = repository.findByUserIdAndActiveTrue(userId);
@@ -123,10 +174,16 @@ public class SubscriptionService {
         for (Subscription subscription : active) {
             monthly = monthly.add(toMonthly(subscription));
         }
+        YearMonth now = YearMonth.now();
         List<NextPaymentItemResponse> nextPayments = active.stream()
-                .sorted(Comparator.comparing(Subscription::getNextBillingDate, Comparator.nullsLast(Comparator.naturalOrder())))
+                .filter(s -> !isPaidFor(s, now) && occursIn(s, now))
+                .sorted(Comparator.comparing(s -> MoneyUtils.atDayOfMonth(now, s.getBillingDay())))
                 .limit(10)
-                .map(s -> new NextPaymentItemResponse(s.getId(), s.getName(), s.getAmount(), s.getNextBillingDate()))
+                .map(s -> new NextPaymentItemResponse(
+                        s.getId(),
+                        s.getName(),
+                        s.getAmount(),
+                        MoneyUtils.atDayOfMonth(now, s.getBillingDay())))
                 .toList();
         return new SubscriptionSummaryResponse(monthly, monthly.multiply(BigDecimal.valueOf(12)), nextPayments);
     }
@@ -155,20 +212,63 @@ public class SubscriptionService {
         };
     }
 
+    public boolean isPendingOn(Subscription subscription, LocalDate date) {
+        YearMonth month = YearMonth.from(date);
+        if (!occursIn(subscription, month)) {
+            return false;
+        }
+        LocalDate dueDate = MoneyUtils.atDayOfMonth(month, subscription.getBillingDay());
+        if (!date.equals(dueDate)) {
+            return false;
+        }
+        return !isPaidFor(subscription, month);
+    }
+
+    private boolean isPaidFor(Subscription subscription, YearMonth month) {
+        return subscription.getLastPaidYear() != null
+                && subscription.getLastPaidMonth() != null
+                && subscription.getLastPaidYear() == month.getYear()
+                && subscription.getLastPaidMonth() == month.getMonthValue();
+    }
+
+    private void validatePayment(PaymentMethod method, UUID accountId, UUID creditCardId) {
+        if (method == PaymentMethod.CREDIT_CARD && creditCardId == null) {
+            throw new BusinessException("Cartão de crédito é obrigatório para essa forma de pagamento");
+        }
+        if (method != PaymentMethod.CREDIT_CARD && accountId == null) {
+            throw new BusinessException("Conta financeira é obrigatória para essa forma de pagamento");
+        }
+    }
+
     private Subscription getOwned(UUID userId, UUID id) {
         return repository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Assinatura não encontrada"));
     }
 
+    private Subscription getOwnedActive(UUID userId, UUID id) {
+        return repository.findByIdAndUserIdAndActiveTrue(id, userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Assinatura não encontrada"));
+    }
+
     private SubscriptionResponse toResponse(Subscription subscription) {
         return new SubscriptionResponse(
-                subscription.getId(), subscription.getName(), subscription.getDescription(), subscription.getAmount(),
+                subscription.getId(),
+                subscription.getName(),
+                subscription.getDescription(),
+                subscription.getAmount(),
                 subscription.getCategory() != null ? subscription.getCategory().getId() : null,
                 subscription.getPaymentMethod(),
                 subscription.getAccount() != null ? subscription.getAccount().getId() : null,
                 subscription.getCreditCard() != null ? subscription.getCreditCard().getId() : null,
-                subscription.getBillingDay(), subscription.getStartDate(), subscription.getNextBillingDate(),
-                subscription.getRecurrence(), subscription.isActive(), subscription.getCancelledAt(),
-                subscription.getCreatedAt(), subscription.getUpdatedAt());
+                subscription.getBillingDay(),
+                subscription.getStartDate(),
+                subscription.getNextBillingDate(),
+                subscription.getLastPaidYear(),
+                subscription.getLastPaidMonth(),
+                subscription.getRecurrence(),
+                subscription.isActive(),
+                subscription.getCancelledAt(),
+                subscription.getCreatedAt(),
+                subscription.getUpdatedAt());
     }
 }

@@ -20,6 +20,8 @@ public record SubscriptionResponse(
         Integer billingDay,
         LocalDate startDate,
         LocalDate nextBillingDate,
+        Integer lastPaidYear,
+        Integer lastPaidMonth,
         RecurrenceType recurrence,
         boolean active,
         LocalDateTime cancelledAt,

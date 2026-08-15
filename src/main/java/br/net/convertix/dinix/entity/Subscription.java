@@ -66,6 +66,10 @@ public class Subscription extends BaseEntity {
 
     private LocalDate nextBillingDate;
 
+    private Integer lastPaidYear;
+
+    private Integer lastPaidMonth;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     @Builder.Default

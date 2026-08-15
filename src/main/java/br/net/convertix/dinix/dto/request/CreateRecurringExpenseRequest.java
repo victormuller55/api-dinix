@@ -1,5 +1,6 @@
 package br.net.convertix.dinix.dto.request;
 
+import br.net.convertix.dinix.enums.PaymentMethod;
 import br.net.convertix.dinix.enums.RecurrenceType;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -17,10 +18,13 @@ public record CreateRecurringExpenseRequest(
         @Size(max = 255) String description,
         @NotNull @Positive BigDecimal amount,
         UUID categoryId,
+        @NotNull PaymentMethod paymentMethod,
         UUID accountId,
+        UUID creditCardId,
         @NotNull @Min(1) @Max(31) Integer dueDay,
         @NotNull LocalDate startDate,
         LocalDate endDate,
-        RecurrenceType recurrence
+        RecurrenceType recurrence,
+        Boolean chargeToday
 ) {
 }

@@ -1,5 +1,6 @@
 package br.net.convertix.dinix.entity;
 
+import br.net.convertix.dinix.enums.PaymentMethod;
 import br.net.convertix.dinix.enums.RecurrenceType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -48,6 +49,15 @@ public class RecurringExpense extends BaseEntity {
     @JoinColumn(name = "account_id")
     private FinancialAccount account;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "payment_method", nullable = false, length = 30)
+    @Builder.Default
+    private PaymentMethod paymentMethod = PaymentMethod.PIX;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "credit_card_id")
+    private CreditCard creditCard;
+
     @Column(nullable = false)
     private Integer dueDay;
 
@@ -60,6 +70,10 @@ public class RecurringExpense extends BaseEntity {
     @Column(nullable = false, length = 20)
     @Builder.Default
     private RecurrenceType recurrence = RecurrenceType.MONTHLY;
+
+    private Integer lastPaidYear;
+
+    private Integer lastPaidMonth;
 
     @Column(nullable = false)
     @Builder.Default
