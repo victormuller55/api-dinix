@@ -46,10 +46,11 @@ public class TransactionController {
             @RequestParam(name = "data_fim", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dataFim,
             @RequestParam(name = "valor_min", required = false) BigDecimal valorMin,
             @RequestParam(name = "valor_max", required = false) BigDecimal valorMax,
+            @RequestParam(name = "altera_saldo_conta", required = false) Boolean alteraSaldoConta,
             Paginacao paginacao) {
         return transactionQueryService.search(
                 SecurityUtils.currentUserId(), busca, tipo, idCategoria, idConta, idCartaoCredito,
-                dataInicio, dataFim, valorMin, valorMax, paginacao.toPageable());
+                dataInicio, dataFim, valorMin, valorMax, alteraSaldoConta, paginacao.toPageable());
     }
 
     @GetMapping("/api/v1/etiquetas")

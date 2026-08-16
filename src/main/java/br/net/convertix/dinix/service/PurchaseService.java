@@ -444,10 +444,15 @@ public class PurchaseService {
                     ? purchase.getDescription() + " (" + installment.getInstallmentNumber()
                     + "/" + installment.getTotalInstallments() + ")"
                     : purchase.getDescription();
+            // Crédito: data da cobrança = data da compra (+ meses da parcela).
+            // Conta: mantém o vencimento/pagamento da parcela.
+            LocalDate ledgerDate = credit
+                    ? purchase.getPurchaseDate().plusMonths(Math.max(0, installment.getInstallmentNumber() - 1))
+                    : installment.getDueDate();
             ledgerService.postExpense(
                     purchase.getUser(),
                     installment.getAmount(),
-                    installment.getDueDate(),
+                    ledgerDate,
                     description,
                     credit ? null : purchase.getFinancialAccount(),
                     purchase.getCreditCard(),

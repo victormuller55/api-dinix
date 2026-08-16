@@ -18,7 +18,9 @@ import br.net.convertix.dinix.repository.AttachmentRepository;
 import br.net.convertix.dinix.repository.FinancialTransactionRepository;
 import br.net.convertix.dinix.repository.TagRepository;
 import jakarta.persistence.criteria.Predicate;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -63,6 +65,7 @@ public class TransactionQueryService {
             LocalDate end,
             BigDecimal minAmount,
             BigDecimal maxAmount,
+            Boolean affectsAccountBalance,
             Pageable pageable) {
         Specification<FinancialTransaction> spec = (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
@@ -95,9 +98,16 @@ public class TransactionQueryService {
             if (maxAmount != null) {
                 predicates.add(cb.lessThanOrEqualTo(root.get("amount"), maxAmount));
             }
+            if (affectsAccountBalance != null) {
+                predicates.add(cb.equal(root.get("affectsAccountBalance"), affectsAccountBalance));
+            }
             return cb.and(predicates.toArray(Predicate[]::new));
         };
-        return PageResponse.from(transactionRepository.findAll(spec, pageable).map(transactionMapper::toResponse));
+        Pageable ordenado = PageRequest.of(
+                pageable.getPageNumber(),
+                pageable.getPageSize(),
+                Sort.by(Sort.Order.desc("transactionDate"), Sort.Order.desc("createdAt")));
+        return PageResponse.from(transactionRepository.findAll(spec, ordenado).map(transactionMapper::toResponse));
     }
 
     @Transactional
